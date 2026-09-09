@@ -9,10 +9,12 @@ from.  Individual files come in as uploads, which suits picking a few at a time.
 """
 from __future__ import annotations
 
+import hmac
 import io
 import os
 import stat
 import tempfile
+import time
 import zipfile
 
 import streamlit as st
@@ -51,6 +53,27 @@ def _sources_in(path) -> int:
                    if e.is_file() and e.name.lower().endswith(SOURCE_EXT))
     except OSError:
         return 0
+
+
+#: Characters that mean something to the file system rather than to a reader.
+NOT_IN_A_NAME = set('<>:"/|?*') | {chr(92)} | {chr(c) for c in range(32)}
+
+
+def scratch_name(name, index) -> str:
+    """A name that is safe to write into the scratch folder.
+
+    Nobody checks what the browser sends as a file name, so it can be a path:
+    "../../notes.html" would be written wherever that leads, outside the
+    scratch folder entirely.  Only the last part of it is kept, and only the
+    characters that carry no meaning to the file system.  The name is trimmed
+    rather than replaced, because the section number is read out of it later.
+    """
+    base = name.replace(chr(92), "/").rstrip("/").rsplit("/", 1)[-1]
+    base = "".join("_" if c in NOT_IN_A_NAME else c for c in base).strip(" .")
+    stem, ext = os.path.splitext(base)
+    if ext.lower() not in SOURCE_EXT:
+        return ""                   # not one of the kinds this tool converts
+    return (stem[:80] or "file-%d" % index) + ext.lower()
 
 
 #: Windows keeps a crowd of bookkeeping folders beside a person's own ones.
@@ -174,19 +197,53 @@ def folder_browser(key, label):
         st.rerun()
 
 
-def gate() -> bool:
-    """Ask for a password when one is configured; absent, the app is open."""
+SECRETS = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       ".streamlit", "secrets.toml")
+
+
+def _password():
+    """(password, trouble).
+
+    'Trouble' is the settings file being there but unreadable -- a typo in it,
+    say.  That has to lock the door rather than open it: this app hands out the
+    contents of the folders on this computer, and a machine reachable from the
+    internet must not be opened up by a mistake in a settings file.
+    """
     try:
-        secret = st.secrets.get("password")
-    except Exception:
-        secret = None
-    if not secret or st.session_state.get("unlocked"):
+        return st.secrets.get("password"), ""
+    except Exception as err:
+        if os.path.exists(SECRETS):
+            return None, type(err).__name__
+        return None, ""             # no settings at all: a fresh copy, no door
+
+
+def gate() -> bool:
+    secret, trouble = _password()
+    if trouble:
+        st.error("설정 파일(.streamlit/secrets.toml)을 읽을 수 없어 앱을 잠갔습니다. "
+                 f"파일을 고친 뒤 앱을 다시 시작해 주세요. ({trouble})")
+        return False
+    if not secret:
+        st.warning("비밀번호가 설정되어 있지 않습니다. 이 앱은 이 컴퓨터의 폴더를 "
+                   "그대로 열어 보여 주므로, 바깥에서 접속할 수 있게 해 두었다면 "
+                   ".streamlit/secrets.toml 에 password 를 지금 넣어 주세요.")
         return True
+    if st.session_state.get("unlocked"):
+        return True
+
+    tries = st.session_state.get("tries", 0)
+    if tries >= 8:
+        st.error("비밀번호를 너무 여러 번 틀렸습니다. 앱을 다시 시작해 주세요.")
+        return False
     entered = st.text_input("비밀번호", type="password")
-    if entered and entered == secret:
-        st.session_state["unlocked"] = True
-        st.rerun()          # redraw without the password box still on screen
     if entered:
+        # A plain == leaks how much of the password was right through how long
+        # the comparison takes; this one always takes the same time.
+        if hmac.compare_digest(entered, str(secret)):
+            st.session_state["unlocked"] = True
+            st.rerun()      # redraw without the password box still on screen
+        st.session_state["tries"] = tries + 1
+        time.sleep(1)       # a guess costs a second, so guessing in bulk is slow
         st.error("비밀번호가 다릅니다.")
     return False
 
@@ -239,8 +296,12 @@ else:
         scratch = st.session_state.setdefault(
             "scratch", tempfile.mkdtemp(prefix="pdf2md-"))
         files = []
-        for upload in uploads:
-            path = os.path.join(scratch, upload.name)
+        for index, upload in enumerate(uploads):
+            name = scratch_name(upload.name, index)
+            if not name:
+                st.warning("변환할 수 없는 파일이라 건너뛰었습니다: " + upload.name)
+                continue
+            path = os.path.join(scratch, name)
             with open(path, "wb") as fh:
                 fh.write(upload.getbuffer())
             files.append(path)
