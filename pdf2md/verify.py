@@ -10,7 +10,9 @@ import collections
 import re
 
 WORD = re.compile(r"[0-9A-Za-zÄÖÅäöåŋɾ]+")
-RULE_ROW = re.compile(r"^\|[-|\s]+\|$")
+# The separator under a table head.  It must actually contain dashes: an
+# all-blank header row is pipes and spaces too, and is not a separator.
+RULE_ROW = re.compile(r"^\|(?:\s*:?-{2,}:?\s*\|)+$")
 
 
 def tokens(text, markdown=False):
@@ -73,3 +75,32 @@ def report(raw_text, markdown, title="") -> dict:
     issues = structure_issues(markdown)
     return {"lost": lost, "lost_count": sum(lost.values()),
             "issues": issues, "ok": not lost and not issues}
+
+
+def table_count(markdown) -> int:
+    """How many Markdown tables the output holds."""
+    return sum(1 for line in markdown.splitlines() if RULE_ROW.match(line))
+
+
+def against_tags(markdown, path) -> list:
+    """Compare the rebuilt tables with the ones the PDF itself declares.
+
+    A browser-printed PDF often keeps the original HTML structure.  Where it
+    does, the number of tables is a fact rather than a guess, and a mismatch
+    means a table was split or two were run together.  Row counts are not
+    compared: wrapped lines are deliberately folded back into their row and
+    merged cells are filled down, so the counts are meant to differ.
+    """
+    from .tagged import read as read_tagged
+    try:
+        pages = read_tagged(path)
+    except Exception:
+        return []
+    declared = sum(1 for page in pages for node in page if node.tag == "Table")
+    if not declared:
+        return []                       # untagged, or no tables declared
+    built = table_count(markdown)
+    if built != declared:
+        return [f"표 개수가 PDF의 구조 정보와 다릅니다 "
+                f"(문서: {declared}개, 변환 결과: {built}개)"]
+    return []

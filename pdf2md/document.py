@@ -9,8 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .inline import render, repair_hyphens, tidy
-from .tables import (bands_of, build, continuation, find_regions,
-                     rows_from)
+from .tables import (aligns_with, bands_of, build, continuation,
+                     find_regions, rows_from)
 
 
 @dataclass
@@ -64,14 +64,34 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
 
         skip = set()
         if carry:
-            extra = continuation(bands, carry["cols"], doc.margin,
-                                 page.height, set(owner))
+            top = page.height * 0.09
+            extra = []
+            # A table opening the page and lining up with the one the last page
+            # ended on is the same table, however far down it runs.
+            for region in regions:
+                first = region["bands"][0]
+                if first != 0 or bands[first][0].yc > top:
+                    continue
+                if aligns_with(bands[first], carry["cols"]):
+                    extra = list(region["bands"])
+                break
+            if not extra:               # or just a row or two left stranded
+                extra = continuation(bands, carry["cols"], doc.margin,
+                                     page.height, set(owner))
             if extra:
                 width = len(carry["table"].header)
+                rows = carry["table"].rows
                 for row in rows_from(bands, extra, carry["cols"],
                                      page.links, resolve):
                     row = ([""] * (width - len(row))) + row if len(row) < width                         else row[:width]
-                    carry["table"].rows.append(row)
+                    # Same rule as within a page: a row that leaves the leading
+                    # column empty is the tail of the one above, not a new row.
+                    if rows and not row[0].strip():
+                        for c, cell in enumerate(row):
+                            if cell:
+                                rows[-1][c] = (rows[-1][c] + " " + cell).strip()
+                    else:
+                        rows.append(row)
                 carry["block"].text = carry["table"].to_markdown()
                 skip = set(extra)
         carry = None

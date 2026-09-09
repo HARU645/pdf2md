@@ -17,7 +17,7 @@ import pymupdf
 from . import profiles
 from .document import assemble, to_markdown
 from .reader import read
-from .verify import report
+from .verify import against_tags, report
 
 SECTION_REF = re.compile(r"sisallys\.php\?p=(\d+)")
 
@@ -72,6 +72,7 @@ def convert_file(path, known=frozenset(), doc=None, profile=None) -> Result:
     built = assemble(doc, profile, known)
     markdown = to_markdown(built, profile, path)
     checks = report(_raw_text(path), markdown, built.title)
+    checks["issues"] += against_tags(markdown, path)
     warnings = list(profile.warnings(doc))
     for block in built.blocks:
         warnings += block.warnings

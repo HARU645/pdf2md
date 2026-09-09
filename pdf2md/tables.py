@@ -157,23 +157,39 @@ def find_regions(bands, rules, margin, breaks=frozenset()):
     return regions
 
 
-def continuation(bands, cols, margin, page_height, owned) -> list:
+def aligns_with(band, cols) -> bool:
+    """Does this band look like a row of a table with these column edges?
+
+    Comparing the first cell's start against an edge fails when cells are
+    centred, so judge by fit instead: the row must sit inside the table's
+    width and hold no more cells than the table has columns.
+    """
+    starts = band_starts(band)
+    if len(starts) < 2 or len(starts) > len(cols):
+        return False
+    lo, hi = min(cols), max(cols)
+    x0 = min(l.x0 for l in band)
+    x1 = max(l.x1 for l in band)
+    return x0 >= lo - 2 and x1 <= hi + 8
+
+
+def continuation(bands, cols, margin, page_height, blocked) -> list:
     """Bands at the top of a page that carry on the table the last page ended
-    with.  A table broken by a page break leaves its remaining rows stranded:
-    alone at the top of the next page they have no neighbours to form a table
-    with, so they have to be recognised by where they sit and how they line up.
+    with.  A table broken by a page break leaves its remaining rows on the next
+    page, where they either stand alone -- too few to look like a table -- or
+    band together into what looks like a second, headerless table.  Both are the
+    same table, so both are recognised by position and column alignment.
     """
     take = []
     for i, band in enumerate(bands):
-        if i in owned:
+        if i in blocked:
             break
         if band[0].yc > page_height * 0.09:      # not at the very top any more
             break
         starts = band_starts(band)
         if not starts or abs(starts[0] - margin) <= 1.5:
             break                                # prose, not a stray row
-        # Cell text sits just inside its column edge, so allow for the padding.
-        if not any(-1.5 <= starts[0] - c <= 7 for c in cols):
+        if not aligns_with(band, cols):
             break                                # does not line up with the table
         take.append(i)
     return take
