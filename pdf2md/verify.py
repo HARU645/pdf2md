@@ -15,7 +15,9 @@ RULE_ROW = re.compile(r"^\|[-|\s]+\|$")
 
 def tokens(text, markdown=False):
     if markdown:
-        text = re.sub(r"^---$.*?^---$", "", text, flags=re.S | re.M)   # front matter
+        # The front matter is kept.  Content moves into it -- the breadcrumb and
+        # the title -- and a word that lives only there has not been lost.
+        text = re.sub(r"^\s*[a-z_]+:", " ", text, flags=re.M)          # yaml keys
         text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)           # link targets
         for ch in "*_":
             text = text.replace(ch, "")          # markers vanish: _rä_**_tt_**_i_

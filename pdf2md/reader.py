@@ -84,6 +84,7 @@ def _smallcap_origins(page) -> set:
 
 def _lines(page) -> list[Line]:
     smallcaps = _smallcap_origins(page)
+    traces = _trace_strings(page)
     out = []
     for block in page.get_text("rawdict")["blocks"]:
         if block["type"]:
@@ -113,12 +114,61 @@ def _lines(page) -> list[Line]:
                             cur = None
             if not "".join(r.text for r in runs).strip():
                 continue
+            runs = _unspace(runs, traces)
             x0, y0, x1, y1 = ln["bbox"]
             out.append(Line(runs, x0, x1, (y0 + y1) / 2,
                             round(max(s["size"] for s in ln["spans"]), 1),
                             block["number"]))
     out.sort(key=lambda l: (round(l.yc, 1), l.x0))
     return out
+
+
+def _trace_strings(page) -> list:
+    """The strings as the PDF actually stores them, with their boxes."""
+    out = []
+    for span in page.get_texttrace():
+        if span.get("type") or not span.get("chars"):
+            continue
+        text = "".join(chr(c[0]) for c in span["chars"])
+        x0, y0, x1, y1 = span["bbox"]
+        out.append((y0, y1, x0, x1, text))
+    return out
+
+
+def _unspace(runs: list[Run], traces: list) -> list[Run]:
+    """Undo letter-spacing.
+
+    A heading drawn with wide letter-spacing carries no space characters of its
+    own; the extractor inserts one between every letter because the gaps look
+    like word breaks.  Rather than guess from the gaps -- which would also
+    rewrite a table row like `p : v | t : d` -- compare against the string the
+    PDF actually stores.  Only a difference of pure whitespace is repaired.
+    """
+    text = "".join(r.text for r in runs)
+    pieces = text.split()
+    # Letter-spacing shows up as a line of mostly single characters.  A table
+    # row is also one style with wide gaps, so this test keeps it out.
+    if len(pieces) < 4 or sum(1 for p in pieces if len(p) == 1) < len(pieces) * 0.8:
+        return runs
+    styles = {(r.bold, r.italic, r.smallcaps) for r in runs if r.text.strip()}
+    if len(styles) != 1:                       # mixed emphasis: leave it alone
+        return runs
+
+    yc = (runs[0].y0 + runs[0].y1) / 2
+    x0 = min(r.x0 for r in runs)
+    x1 = max(r.x1 for r in runs)
+    parts = [t for (ty0, ty1, tx0, tx1, t) in traces
+             if ty0 - 1 <= yc <= ty1 + 1 and tx0 >= x0 - 1 and tx1 <= x1 + 1]
+    if not parts:
+        return runs
+    true_text = "".join(parts)
+    squeeze = lambda s: "".join(s.split())
+    if squeeze(true_text) != squeeze(text) or true_text == text:
+        return runs
+
+    first = next(r for r in runs if r.text.strip())
+    return [Run(true_text, first.bold, first.italic, first.smallcaps,
+                x0, x1, first.y0, first.y1)]
 
 
 def _rules(page) -> dict[float, list[float]]:
