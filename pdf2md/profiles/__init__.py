@@ -11,3 +11,5 @@ def pick(doc):
     scored = sorted(((p.score(doc), p) for p in ALL), key=lambda t: -t[0])
     best_score, best = scored[0]
     return best(), best_score
+
+__all__ = ["ALL", "Profile", "ViskProfile", "pick"]

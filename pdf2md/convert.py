@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 
 import pymupdf
 
-from . import profiles
+from . import html_source, profiles
 from .document import assemble, to_markdown
 from .reader import read
 from .verify import against_tags, report
@@ -63,7 +63,13 @@ def _raw_text(path) -> str:
     return "\n".join(lines)
 
 
+def is_html(path) -> bool:
+    return path.lower().endswith((".html", ".htm"))
+
+
 def convert_file(path, known=frozenset(), doc=None, profile=None) -> Result:
+    if is_html(path):
+        return _convert_html(path, known, profile)
     doc = doc or read(path)
     if profile is None:
         profile, confidence = profiles.pick(doc)
@@ -82,6 +88,21 @@ def convert_file(path, known=frozenset(), doc=None, profile=None) -> Result:
                   issues=checks["issues"], warnings=warnings)
 
 
+def _convert_html(path, known, profile) -> Result:
+    """A saved web page still carries its own structure, so nothing is inferred."""
+    if profile is None:
+        profile = profiles.ViskProfile() if html_source.looks_like_visk(path)             else profiles.Profile()
+    built = html_source.assemble(path, profile, known)
+    markdown = to_markdown(built, profile, path)
+    checks = report(html_source.source_text(path), markdown, built.title)
+    name = html_source.output_name(path) or profile.output_name(path, None)
+    return Result(path=path, name=name, markdown=markdown,
+                  profile=profile.name + "+html", confidence=1.0,
+                  section=built.section, title=built.title,
+                  lost=checks["lost"] or None, issues=checks["issues"],
+                  warnings=list(profile.warnings(None)) if profile.name == "generic" else [])
+
+
 def convert_many(files, dst=None, write=True) -> list:
     """Convert a set of PDFs as one group.
 
@@ -93,19 +114,29 @@ def convert_many(files, dst=None, write=True) -> list:
     if not files:
         return []
 
-    docs = {path: read(path) for path in files}
-    chosen = {path: profiles.pick(doc) for path, doc in docs.items()}
+    docs, chosen = {}, {}
+    for path in files:
+        if is_html(path):
+            chosen[path] = (profiles.ViskProfile()
+                            if html_source.looks_like_visk(path)
+                            else profiles.Profile(), 1.0)
+        else:
+            docs[path] = read(path)
+            chosen[path] = profiles.pick(docs[path])
+
     known = set()
-    for path, doc in docs.items():
+    for path in files:
         profile, _ = chosen[path]
-        m = re.search(r"(\d+)", profile.output_name(path, doc))
+        name = (html_source.output_name(path) if is_html(path)
+                else profile.output_name(path, docs.get(path)))
+        m = re.search(r"(\d+)", name or "")
         if m and profile.name != "generic":
             known.add(int(m.group(1)))
 
     results = []
     for path in files:
         profile, confidence = chosen[path]
-        result = convert_file(path, known, doc=docs[path], profile=profile)
+        result = convert_file(path, known, doc=docs.get(path), profile=profile)
         result.confidence = confidence
         results.append(result)
 
@@ -114,22 +145,35 @@ def convert_many(files, dst=None, write=True) -> list:
     return results
 
 
-def find_pdfs(folder) -> list:
-    """PDFs in a folder.  If there are none, look one level down: people often
-    keep the sources in a `pdf` subfolder next to where the output goes."""
-    here = sorted(glob.glob(os.path.join(folder, "*.pdf")))
-    if here:
-        return here
-    deeper = []
-    for entry in sorted(glob.glob(os.path.join(folder, "*"))):
-        if os.path.isdir(entry):
-            deeper += sorted(glob.glob(os.path.join(entry, "*.pdf")))
-    return deeper
+def find_sources(folder) -> list:
+    """What to convert from a folder.
+
+    A saved web page is preferred over a printout of one: the HTML still says
+    what everything is, while the PDF has to be read back from coordinates.
+    If there is nothing at the top level, look one folder down -- sources are
+    often kept in a `html` or `pdf` subfolder beside the output.
+    """
+    for pattern in ("*.html", "*.htm", "*.pdf"):
+        here = sorted(glob.glob(os.path.join(folder, pattern)))
+        if here:
+            return here
+    for pattern in ("*.html", "*.htm", "*.pdf"):
+        deeper = []
+        for entry in sorted(glob.glob(os.path.join(folder, "*"))):
+            if os.path.isdir(entry):
+                deeper += sorted(glob.glob(os.path.join(entry, pattern)))
+        if deeper:
+            return deeper
+    return []
+
+
+def find_pdfs(folder) -> list:            # kept for callers that want only PDFs
+    return [f for f in find_sources(folder) if f.lower().endswith(".pdf")]
 
 
 def convert_folder(src, dst=None, write=True) -> list:
     """Convert every PDF in a folder."""
-    return convert_many(find_pdfs(src), dst, write)
+    return convert_many(find_sources(src), dst, write)
 
 
 def save(results, dst) -> list:

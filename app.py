@@ -16,7 +16,7 @@ import zipfile
 
 import streamlit as st
 
-from pdf2md.convert import (build_index, convert_many, find_pdfs,
+from pdf2md.convert import (build_index, convert_many, find_sources,
                             missing_references, save)
 
 st.set_page_config(page_title="PDF → Markdown", page_icon="📄", layout="wide")
@@ -76,7 +76,7 @@ source_label = ""
 
 if mode == "폴더 통째로":
     col_a, col_b = st.columns(2)
-    source = col_a.text_input("PDF가 든 폴더",
+    source = col_a.text_input("원본이 든 폴더 (PDF 또는 저장한 웹페이지)",
                               value=st.session_state.get("source", DEFAULT_SOURCE))
     st.session_state["source"] = source
     out_dir = col_b.text_input("저장할 폴더",
@@ -85,13 +85,15 @@ if mode == "폴더 통째로":
     if not os.path.isdir(source):
         st.warning("폴더를 찾을 수 없습니다. 경로를 확인해 주세요.")
     else:
-        files = find_pdfs(source)
+        files = find_sources(source)
         if files:
-            source_label = f"PDF {len(files)}개를 찾았습니다."
+            kind = "웹페이지" if files[0].lower().endswith((".html", ".htm")) else "PDF"
+            source_label = f"{kind} {len(files)}개를 찾았습니다."
         else:
-            st.warning("이 폴더에 PDF가 없습니다.")
+            st.warning("이 폴더에 변환할 파일이 없습니다.")
 else:
-    uploads = st.file_uploader("PDF 파일을 고르세요 (여러 개 가능)", type="pdf",
+    uploads = st.file_uploader("파일을 고르세요 (PDF 또는 저장한 웹페이지, 여러 개 가능)",
+                               type=["pdf", "html", "htm"],
                                accept_multiple_files=True)
     out_dir = None
     if LOCAL:

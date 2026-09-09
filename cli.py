@@ -11,16 +11,18 @@ import glob
 import os
 import sys
 
-from pdf2md.convert import convert_many, find_pdfs, missing_references, save
+from pdf2md.convert import (convert_many, find_sources, missing_references,
+                            save)
 
 STATUS = {"정상": "OK  ", "확인": "확인", "손실": "손실"}
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
-        prog="pdf2md", description="PDF를 AI가 읽기 좋은 마크다운으로 변환합니다.")
+        prog="pdf2md",
+        description="PDF와 저장한 웹페이지를 AI가 읽기 좋은 마크다운으로 바꿉니다.")
     ap.add_argument("source", nargs="+",
-                    help="PDF 파일 하나 이상, 또는 PDF가 든 폴더")
+                    help="PDF나 저장한 웹페이지(.html), 또는 그것이 든 폴더")
     ap.add_argument("-o", "--out", default="output", help="저장할 폴더 (기본: output)")
     ap.add_argument("--dry-run", action="store_true", help="변환만 하고 저장하지 않음")
     ap.add_argument("--quiet", action="store_true", help="요약만 출력")
@@ -29,7 +31,7 @@ def main(argv=None) -> int:
     files = []
     for item in args.source:
         if os.path.isdir(item):
-            files += find_pdfs(item)
+            files += find_sources(item)
         elif os.path.isfile(item):
             files.append(item)
         else:
@@ -41,7 +43,7 @@ def main(argv=None) -> int:
         save(results, args.out)
 
     if not results:
-        print("PDF를 찾지 못했습니다.", file=sys.stderr)
+        print("변환할 파일을 찾지 못했습니다.", file=sys.stderr)
         return 1
 
     lost_total = 0
