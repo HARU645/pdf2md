@@ -132,20 +132,30 @@ def _text(node) -> str:
 
 # ------------------------------------------------------------------ tables
 def _table(node, resolve) -> str:
-    rows = []
+    rows, counts = [], []
     for tr in _descend(node, lambda n: n.tag == "tr"):
         cells = [tidy(_inline(td, resolve)) for td in tr.kids
                  if isinstance(td, Node) and td.tag in ("td", "th")]
         if cells:
             rows.append(cells)
+            counts.append(len(cells))       # before the padding below
     if not rows:
         return ""
-    width = max(len(r) for r in rows)
+    width = max(counts)
     rows = [r + [""] * (width - len(r)) for r in rows]
 
-    # A row of its own that spans the table labels the rows beneath it; make
-    # that a column so every row stands on its own.
-    spanning = [i for i, r in enumerate(rows) if sum(1 for c in r if c) == 1 and r[0]]
+    # A row that labels the rows beneath it is written as a single cell across
+    # the table: one cell, with something in it, where the table is wider.
+    # Both halves of that matter.  A row whose last column is simply empty
+    # still has the column, so counting the cells keeps it out of here; and a
+    # short row that holds several things is a row of headings, not a label,
+    # so only the first of them would survive being read as one.
+    spanning = [i for i, row in enumerate(rows)
+                if counts[i] < width and sum(1 for c in row if c) == 1 and row[0]]
+    # A label with no rows under it is labelling nothing, whatever it looked
+    # like; keep it as a row of its own rather than dropping it on the floor.
+    while spanning and spanning[-1] == len(rows) - 1:
+        spanning.pop()
     headless = False
     if spanning and len(spanning) < len(rows):
         labelled, group = [], ""
