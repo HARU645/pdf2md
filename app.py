@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 import os
+import stat
 import tempfile
 import zipfile
 
@@ -38,6 +39,139 @@ DEFAULT_OUT = _setting("output_folder", os.path.join(
 # Hosted anywhere else the app is upload-in, download-out, and says so.
 # Hosts run Linux; set PDF2MD_HOSTED=1 to try that shape here.
 LOCAL = os.name == "nt" and os.environ.get("PDF2MD_HOSTED") != "1"
+
+
+SOURCE_EXT = (".pdf", ".html", ".htm")
+
+
+def _sources_in(path) -> int:
+    """How many convertible files sit directly in a folder."""
+    try:
+        return sum(1 for e in os.scandir(path)
+                   if e.is_file() and e.name.lower().endswith(SOURCE_EXT))
+    except OSError:
+        return 0
+
+
+#: Windows keeps a crowd of bookkeeping folders beside a person's own ones.
+#: They are marked hidden or system, so the marking is what to go by.
+BURIED = (getattr(stat, "FILE_ATTRIBUTE_HIDDEN", 0)
+          | getattr(stat, "FILE_ATTRIBUTE_SYSTEM", 0))
+
+
+def _visible(entry) -> bool:
+    if entry.name.startswith((".", "$")):
+        return False
+    try:
+        return not (entry.stat(follow_symlinks=False).st_file_attributes & BURIED)
+    except (OSError, AttributeError):
+        return True             # no such marking here; show it
+
+
+def _subfolders(path) -> list:
+    """Sub-folders worth showing, in name order."""
+    try:
+        found = [e for e in os.scandir(path) if e.is_dir() and _visible(e)]
+    except OSError:
+        return []               # a folder this account may not read
+    found.sort(key=lambda e: e.name.lower())
+    return found
+
+
+def _drives() -> list:
+    return [d + ":\\" for d in "CDEFGHIJKLMNOPQRSTUVWXYZ" if os.path.isdir(d + ":\\")]
+
+
+def _parent(path) -> str:
+    trimmed = path.rstrip("\\/")
+    if len(trimmed) < 3:                # already a drive root such as 'D:'
+        return path
+    above = os.path.dirname(trimmed)
+    return above if os.path.isdir(above) else path
+
+
+def browse(key, start):
+    """Walk this computer's folders and hand back the one that is picked.
+
+    Deliberately not the system's folder dialog.  The page can be open on a
+    different machine from the files, and a dialog would then open beside the
+    files, where nobody is looking, with the page waiting on a window that will
+    never be answered.  Walking inside the page works either way.
+    """
+    at = st.session_state.get(key)
+    if not at or not os.path.isdir(at):
+        at = start if start and os.path.isdir(start) else os.path.expanduser("~")
+        st.session_state[key] = at
+
+    def go(path):
+        st.session_state[key] = path
+        st.rerun()
+
+    st.code(at, language=None)
+
+    drives = _drives()
+    row = st.columns([2, 2] + [1] * len(drives))
+    if row[0].button("⬆ 상위 폴더", key=key + "-up", width="stretch"):
+        go(_parent(at))
+    picked = row[1].button("✓ 이 폴더 선택", key=key + "-ok", type="primary",
+                           width="stretch")
+    for col, drive in zip(row[2:], drives):
+        if col.button(drive[:2], key=key + "-drive-" + drive[0], width="stretch"):
+            go(drive)
+
+    folders = _subfolders(at)
+    shown = folders[:200]
+    # Counting means opening every sub-folder, so only do it where the answer is
+    # useful: a folder with hundreds of children is somewhere on the way, not
+    # the destination.
+    counting = len(shown) <= 40
+    for i in range(0, len(shown), 4):
+        for col, entry in zip(st.columns(4), shown[i:i + 4]):
+            held = _sources_in(entry.path) if counting else 0
+            label = f"📁 {entry.name}" + (f"  ({held})" if held else "")
+            if col.button(label, key=key + "-in-" + entry.path, width="stretch"):
+                go(entry.path)
+    if len(folders) > len(shown):
+        st.caption(f"하위 폴더가 {len(folders)}개라 앞의 200개만 보여줍니다. "
+                   "위 칸에 경로를 직접 적어도 됩니다.")
+    elif not folders:
+        st.caption("하위 폴더가 없습니다.")
+
+    here = _sources_in(at)
+    st.caption(f"이 폴더에 변환할 파일 {here}개가 있습니다."
+               if here else "이 폴더에는 변환할 파일이 없습니다.")
+    return at if picked else None
+
+
+def folder_field(box, label, key, default):
+    """A folder path, typed or picked.  Typing is quicker when the path is
+    already known, so the box stays and the browser sits beside it.
+
+    The opener is a button rather than a tick box because picking a folder has
+    to close the browser again, and a tick box cannot be un-ticked from here:
+    the page refuses to change a control that has already been drawn.
+    """
+    value = box.text_input(label, value=st.session_state.get(key, default))
+    st.session_state[key] = value
+    flag = "open-" + key
+    open_now = st.session_state.get(flag)
+    if box.button("✕ 닫기" if open_now else "📁 폴더 찾아보기",
+                  key="toggle-" + key, width="stretch"):
+        st.session_state[flag] = not open_now
+        st.rerun()
+    return value
+
+
+def folder_browser(key, label):
+    if not st.session_state.get("open-" + key):
+        return
+    with st.container(border=True):
+        st.caption(label)
+        picked = browse("at-" + key, st.session_state.get(key, ""))
+    if picked:
+        st.session_state[key] = picked
+        st.session_state["open-" + key] = False
+        st.rerun()
 
 
 def gate() -> bool:
@@ -76,12 +210,11 @@ source_label = ""
 
 if mode == "폴더 통째로":
     col_a, col_b = st.columns(2)
-    source = col_a.text_input("원본이 든 폴더 (PDF 또는 저장한 웹페이지)",
-                              value=st.session_state.get("source", DEFAULT_SOURCE))
-    st.session_state["source"] = source
-    out_dir = col_b.text_input("저장할 폴더",
-                               value=st.session_state.get("out", DEFAULT_OUT))
-    st.session_state["out"] = out_dir
+    source = folder_field(col_a, "원본이 든 폴더 (PDF 또는 저장한 웹페이지)",
+                          "source", DEFAULT_SOURCE)
+    out_dir = folder_field(col_b, "저장할 폴더", "out", DEFAULT_OUT)
+    folder_browser("source", "원본이 든 폴더를 고르세요")
+    folder_browser("out", "결과를 저장할 폴더를 고르세요")
     if not os.path.isdir(source):
         st.warning("폴더를 찾을 수 없습니다. 경로를 확인해 주세요.")
     else:
@@ -97,9 +230,9 @@ else:
                                accept_multiple_files=True)
     out_dir = None
     if LOCAL:
-        out_dir = st.text_input("저장할 폴더 (내 컴퓨터에 바로 저장할 때만 사용)",
-                                value=st.session_state.get("out", DEFAULT_OUT))
-        st.session_state["out"] = out_dir
+        out_dir = folder_field(st, "저장할 폴더 (내 컴퓨터에 바로 저장할 때만 사용)",
+                               "out", DEFAULT_OUT)
+        folder_browser("out", "결과를 저장할 폴더를 고르세요")
     if uploads:
         # Uploads arrive as bytes; the converter reads from disk, so park them
         # in a scratch folder that lives as long as the page session.
