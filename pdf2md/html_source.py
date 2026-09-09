@@ -13,6 +13,7 @@ import re
 from html.parser import HTMLParser
 
 from .document import Assembled, Block
+from .profiles.visk import NAME
 from .inline import repair_hyphens, tidy
 
 #: Elements whose content is furniture, not text.
@@ -348,4 +349,4 @@ def looks_like_visk(path) -> bool:
 
 def output_name(path) -> str:
     m = re.search(r"§\s*(\d+)", os.path.basename(path))
-    return "visk-%03d.md" % int(m.group(1)) if m else None
+    return NAME % int(m.group(1)) if m else None

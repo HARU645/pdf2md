@@ -15,6 +15,11 @@ from .base import Profile
 
 SECTION_URL = re.compile(r"https?://kaino\.kotus\.fi/visk/sisallys\.php\?p=(\d+)")
 
+#: What a converted section is called.  The work runs past § 1400, so three
+#: digits would leave the names ragged and sort § 49 after § 1445; four keep
+#: every file the same width and in section order.
+NAME = "visk-%04d.md"
+
 
 class ViskProfile(Profile):
     name = "visk"
@@ -62,7 +67,7 @@ class ViskProfile(Profile):
     def resolve_link(self, uri, known) -> str:
         m = SECTION_URL.match(uri)
         if m and int(m.group(1)) in known:
-            return "./visk-%03d.md" % int(m.group(1))
+            return "./" + NAME % int(m.group(1))
         return uri
 
     def section_id(self, title):
@@ -72,7 +77,7 @@ class ViskProfile(Profile):
     def output_name(self, path, doc) -> str:
         m = re.search(r"§\s*(\d+)", os.path.basename(path))
         if m:
-            return "visk-%03d.md" % int(m.group(1))
+            return NAME % int(m.group(1))
         return super().output_name(path, doc)
 
     def front_matter(self, title, section, breadcrumb, path) -> dict:
