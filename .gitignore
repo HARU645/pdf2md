@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.pyc
+
+# 변환 결과와 정답지에는 VISK 본문이 들어 있습니다 (Kotus 저작물).
+# 공개 저장소에 올리지 않습니다. 정답지는 test_golden.py --accept 로 다시 만듭니다.
+output/
+tests/golden/
+
+# 비밀번호는 배포 사이트의 Secrets 설정에만 넣습니다.
+.streamlit/secrets.toml
