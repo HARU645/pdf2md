@@ -41,7 +41,7 @@ def gate() -> bool:
     entered = st.text_input("비밀번호", type="password")
     if entered and entered == secret:
         st.session_state["unlocked"] = True
-        return True
+        st.rerun()          # redraw without the password box still on screen
     if entered:
         st.error("비밀번호가 다릅니다.")
     return False
