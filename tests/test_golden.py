@@ -45,12 +45,19 @@ def default_source():
 
 
 def routes(source):
-    """(name, folder) for each way in, when that folder holds anything."""
-    base = os.path.dirname(source.rstrip("\\/")) or source
-    for name in ("html", "pdf"):
-        folder = os.path.join(base, name)
-        if find_sources(folder):
-            yield name, folder
+    """(name, folder) for each way in, when that folder holds anything.
+
+    The folder given may be the one that holds `html` and `pdf` side by side,
+    or it may be one of the two; both are what somebody would reasonably point
+    at, so look inside first and beside second.
+    """
+    source = source.rstrip("\\/")
+    for base in (source, os.path.dirname(source)):
+        found = [(name, os.path.join(base, name)) for name in ("html", "pdf")
+                 if find_sources(os.path.join(base, name))]
+        if found:
+            return found
+    return []
 
 
 def check_route(name, folder, accept) -> int:
