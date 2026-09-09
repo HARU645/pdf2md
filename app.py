@@ -33,9 +33,17 @@ def _setting(name, fallback=""):
         return os.environ.get("PDF2MD_" + name.upper(), fallback)
 
 
-DEFAULT_SOURCE = _setting("source_folder")
-DEFAULT_OUT = _setting("output_folder", os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "output"))
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+#: A copy that travels on a memory stick keeps its documents beside itself, and
+#: the drive letter changes from one computer to the next, so the folder next
+#: door is the only starting point that stays true.
+BESIDE = os.path.join(HERE, "visk")
+TRAVELLING = os.path.isdir(BESIDE)
+
+DEFAULT_SOURCE = _setting("source_folder") or (BESIDE if TRAVELLING else "")
+DEFAULT_OUT = _setting("output_folder") or (
+    os.path.join(BESIDE, "markdown") if TRAVELLING else os.path.join(HERE, "output"))
 
 # Reading and writing folders only makes sense on the machine that holds them.
 # Hosted anywhere else the app is upload-in, download-out, and says so.
@@ -224,9 +232,12 @@ def gate() -> bool:
                  f"파일을 고친 뒤 앱을 다시 시작해 주세요. ({trouble})")
         return False
     if not secret:
-        st.warning("비밀번호가 설정되어 있지 않습니다. 이 앱은 이 컴퓨터의 폴더를 "
-                   "그대로 열어 보여 주므로, 바깥에서 접속할 수 있게 해 두었다면 "
-                   ".streamlit/secrets.toml 에 password 를 지금 넣어 주세요.")
+        # Started as a door onto one computer only, there is nobody outside to
+        # keep out, and a warning about it would be noise.
+        if os.environ.get("PDF2MD_LOCAL_ONLY") != "1":
+            st.warning("비밀번호가 설정되어 있지 않습니다. 이 앱은 이 컴퓨터의 폴더를 "
+                       "그대로 열어 보여 주므로, 바깥에서 접속할 수 있게 해 두었다면 "
+                       ".streamlit/secrets.toml 에 password 를 지금 넣어 주세요.")
         return True
     if st.session_state.get("unlocked"):
         return True

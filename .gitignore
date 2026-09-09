@@ -9,3 +9,9 @@ tests/golden/
 
 # 비밀번호는 배포 사이트의 Secrets 설정에만 넣습니다.
 .streamlit/secrets.toml
+
+# USB 판 (build-usb.py 가 만드는 폴더)
+dist/
+
+# 시작프로그램 바로가기 백업
+*.lnk.backup
