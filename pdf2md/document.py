@@ -43,7 +43,18 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
 
     for page in doc.pages:
         bands = bands_of(page.lines)
-        regions = find_regions(bands, page.rules, doc.margin)
+        # A caption announces the next table, so it must not sit inside one.
+        breaks = set()
+        for n, band in enumerate(bands):
+            text = " ".join(l.text for l in band).replace("\xa0", " ").strip()
+            if not text:
+                continue
+            kind = profile.classify(text, max(l.size for l in band),
+                                    min(l.x0 for l in band), doc, page.number,
+                                    dict(state))
+            if kind == "caption":
+                breaks.add(n)
+        regions = find_regions(bands, page.rules, doc.margin, breaks)
         owner = {}
         for n, region in enumerate(regions):
             for i in region["bands"]:
@@ -58,6 +69,10 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
                 md = table.to_markdown()
                 if md:
                     blocks.append(Block("table", md, list(table.warnings)))
+                for stray in table.orphans:
+                    # A spanning line that labelled no rows is a note about the
+                    # table; it belongs beside it, not nowhere.
+                    blocks.append(Block("prose", tidy(stray)))
                 i = max(region["bands"]) + 1
                 continue
 

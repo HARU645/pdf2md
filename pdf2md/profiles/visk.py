@@ -49,7 +49,10 @@ class ViskProfile(Profile):
             return "drop"
         if re.match(r"^»\s", text) and len(text) < 60:
             return "footer"
-        if re.match(r"^Asetelma\s+\d+", text):
+        # VISK numbers its tables two ways: 'Asetelma' inline, 'Taulukko' for
+        # statistics.  The colon is what separates a caption from a sentence
+        # that merely opens with the same words ('Taulukko 3 esittää...').
+        if re.match(r"^(Asetelma|Taulukko)\s+\d+\s*:", text):
             return "caption"
         if x0 > doc.margin + 10:
             return "example"

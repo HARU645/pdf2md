@@ -19,6 +19,9 @@ class Table:
     header: list
     rows: list
     warnings: list = field(default_factory=list)
+    #: Text of spanning rows that ended up labelling nothing.  Kept so it can be
+    #: written out beside the table instead of vanishing.
+    orphans: list = field(default_factory=list)
 
     def to_markdown(self) -> str:
         if not self.rows:
@@ -77,13 +80,20 @@ def band_starts(band):
     return cluster([c[0].x0 for line in band for c in line_cells(line)])
 
 
-def find_regions(bands, rules, margin):
+def find_regions(bands, rules, margin, breaks=frozenset()):
     """Seed on bands holding two or more cells, then take in the neighbouring
     single-cell bands that are wrapped continuations.  Prose starts at the page
-    margin and cells do not, which keeps a paragraph from being swallowed."""
+    margin and cells do not, which keeps a paragraph from being swallowed.
+
+    `breaks` are band indices a table can never span -- a caption announces the
+    next table, so two tables with a caption between them stay separate.
+    """
     starts = [band_starts(b) for b in bands]
     multi = [len(s) >= 2 for s in starts]
     at_margin = [bool(s) and abs(s[0] - margin) <= 1.5 for s in starts]
+    for i in breaks:                       # a hard stop behaves like prose
+        multi[i] = False
+        at_margin[i] = True
 
     seeds, i = [], 0
     while i < len(bands):
@@ -113,16 +123,24 @@ def find_regions(bands, rules, margin):
         if len(seed_cols) < 2:
             continue
 
-        def continues(t, ref, _cols=seed_cols):
+        def continues(t, ref, downward, _cols=seed_cols):
             if multi[t] or not starts[t] or at_margin[t]:
                 return False
             if abs(bands[t][0].yc - bands[ref][0].yc) > 22:
                 return False
+            if downward:
+                # Below the last row, a line reaching across the columns is a
+                # note about the table, not the tail of a wrapped cell.
+                width = max(l.x1 for l in bands[t]) - min(l.x0 for l in bands[t])
+                crossed = sum(1 for c in _cols if starts[t][0] + 2 < c
+                              < min(l.x0 for l in bands[t]) + width - 2)
+                if crossed >= 2:
+                    return False
             return any(abs(starts[t][0] - c) <= 2.5 for c in _cols)
 
-        while lo - 1 >= 0 and continues(lo - 1, lo):
+        while lo - 1 >= 0 and continues(lo - 1, lo, False):
             lo -= 1
-        while hi + 1 < len(bands) and continues(hi + 1, hi):
+        while hi + 1 < len(bands) and continues(hi + 1, hi, True):
             hi += 1
         idx = list(range(lo, hi + 1))
         if len(idx) < 2:
@@ -204,19 +222,26 @@ def build(bands, region, links, resolve) -> Table:
 def _assemble(rows, header_present) -> Table:
     spanning = any(k == "span" for k, _ in rows)
     header, data, group = None, [], ""
+    used, pending, orphans = False, None, []
     for kind, value in rows:
         if kind == "span":
+            if pending is not None and not used:
+                orphans.append(pending)      # laboured nothing; keep it anyway
             group = value.replace("**", "").replace("_", "").strip()
+            pending, used = value, False
             continue
         if kind != "row":
             continue
+        used = True
         cells = ([group] if spanning else []) + list(value)
         if header is None and header_present:
             header = cells
         else:
             data.append(cells)
+    if pending is not None and not used:
+        orphans.append(pending)
     if not data:
-        return Table([], [])
+        return Table([], [], orphans=orphans)
 
     width = max(len(r) for r in data)
     if header:
@@ -233,7 +258,7 @@ def _assemble(rows, header_present) -> Table:
             if not data[r][c]:
                 data[r][c] = data[r - 1][c]
 
-    table = Table(header, data)
+    table = Table(header, data, orphans=orphans)
     trailing = sum(1 for r in data if r and r[-1].rstrip().endswith(","))
     if trailing:
         table.warnings.append(
