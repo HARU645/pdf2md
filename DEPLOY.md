@@ -139,3 +139,40 @@ Streamlit 클라우드 대신 **이 컴퓨터에서 앱을 돌리고 Cloudflare�
 
 시작프로그램 폴더에서 `pdf2md.lnk` 를 지우면 됩니다.
 탐색기 주소창에 `shell:startup` 을 치면 그 폴더가 열립니다.
+
+## 배포를 되돌리려면
+
+`uninstall-pdf2md.bat` 를 실행하면 단계를 골라서 되돌릴 수 있습니다.
+
+| 단계 | 하는 일 | 되돌릴 수 있나 |
+|---|---|---|
+| 1 | 프로그램만 종료 | ✅ `run-pdf2md.vbs` 로 바로 복구 |
+| 2 | 위 + 자동 시작 해제 | ✅ 바로가기만 다시 만들면 됨 |
+| 3 | 위 + 터널 삭제 | ❌ 주소를 다시 만들어야 함 |
+
+3단계까지 하면 **DNS 기록은 따로 지워야 합니다.**
+<https://dash.cloudflare.com> → `tnmy.uk` → DNS → Records 에서
+이름이 `pdf2md` 인 CNAME 줄을 찾아 삭제하세요.
+
+### 흔적까지 완전히 지우려면
+
+위 3단계를 마친 뒤에 추가로:
+
+```
+winget uninstall Cloudflare.cloudflared
+```
+
+그리고 `C:\Users\yeong\.cloudflared` 폴더를 통째로 지우면 Cloudflare 로그인
+정보까지 사라집니다.
+
+GitHub 저장소는 <https://github.com/HARU645/pdf2md/settings> 맨 아래
+Danger Zone 에서 삭제할 수 있습니다.
+
+### 앱 자체는 그대로 남습니다
+
+배포를 전부 되돌려도 이 컴퓨터에서 쓰는 것은 아무 영향이 없습니다.
+
+```
+venv\Scripts\python cli.py "C:\myfiles\pdf" -o "C:\myfiles\markdown"
+venv\Scripts\streamlit run app.py
+```
