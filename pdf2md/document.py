@@ -204,6 +204,8 @@ def to_markdown(a: Assembled, profile, path) -> str:
             out.append("### " + block.text + "\n")
         elif block.kind == "example":
             out.append("\n".join("> " + l for l in block.text.split("\n")) + "\n")
+        elif block.kind == "list":
+            out.append(block.text + "\n")
         elif block.kind == "table":
             out.append(block.text + "\n")
     if a.footer:

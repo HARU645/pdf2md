@@ -257,6 +257,20 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
                 md = _table(kid, resolve)
                 if md:
                     blocks.append(Block("table", md))
+            elif tag in ("ul", "ol"):
+                items = [k for k in kid.kids
+                         if isinstance(k, Node) and k.tag == "li"]
+                # The bibliography links at the foot of the page are a list too;
+                # they belong under the rule at the end, not in the body.
+                if items and all(_text(i).strip().startswith("»") for i in items):
+                    footer.extend(tidy(_inline(i, resolve)) for i in items)
+                    continue
+                lines = [tidy(_inline(i, resolve)) for i in items]
+                lines = ["- " + l for l in lines if l]
+                if lines:
+                    blocks.append(Block("list", "\n".join(lines)))
+                else:
+                    walk(kid)
             elif tag == "li" and _text(kid).strip().startswith("»"):
                 footer.append(tidy(_inline(kid, resolve)))
             elif tag == "p":
