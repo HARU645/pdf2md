@@ -21,8 +21,18 @@ from pdf2md.convert import (build_index, convert_many, find_pdfs,
 
 st.set_page_config(page_title="PDF → Markdown", page_icon="📄", layout="wide")
 
-DEFAULT_SOURCE = r"C:\myfiles\pdf"
-DEFAULT_OUT = r"C:\myfiles\markdown"
+def _setting(name, fallback=""):
+    """Read a local setting.  Kept out of the repository so the code carries no
+    one machine's folder layout; absent, the field simply starts empty."""
+    try:
+        return st.secrets.get(name, fallback)
+    except Exception:
+        return os.environ.get("PDF2MD_" + name.upper(), fallback)
+
+
+DEFAULT_SOURCE = _setting("source_folder")
+DEFAULT_OUT = _setting("output_folder", os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "output"))
 
 # Reading and writing folders only makes sense on the machine that holds them.
 # Hosted anywhere else the app is upload-in, download-out, and says so.

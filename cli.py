@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Command line entry point.
 
-    python cli.py "C:\\myfiles" -o output\\visk
+    python cli.py "C:\\myfiles\\pdf" -o "C:\\myfiles\\markdown"
     python cli.py one-file.pdf -o output --quiet
 """
 from __future__ import annotations

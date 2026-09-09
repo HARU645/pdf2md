@@ -24,8 +24,8 @@
 2. **Repository name**: `pdf2md` (다른 이름도 됩니다)
 3. **Public** 또는 **Private** 선택
    - VISK 본문은 이미 저장소에서 빠져 있어서 Public도 안전합니다
-   - 다만 코드에 `D:\myfiles\...` 같은 내 폴더 경로가 남아 있습니다.
-     그것도 보이기 싫으면 Private으로 하세요
+   - 내 폴더 경로는 코드에서 빠져 있습니다 (.streamlit/secrets.toml 에만 있고
+     그 파일은 올라가지 않습니다)
 4. **아래 세 개는 체크하지 마세요** — 이미 이쪽에 파일이 있어서 충돌합니다
    - Add a README file
    - Add .gitignore

@@ -21,8 +21,27 @@ sys.path.insert(0, ROOT)
 
 from pdf2md.convert import convert_folder  # noqa: E402
 
-SOURCE = r"C:\myfiles\pdf"
 GOLDEN = os.path.join(ROOT, "tests", "golden")
+
+
+def default_source():
+    """Where the sample PDFs live.  Kept out of the repository: it is one
+    machine's layout, not part of the tool."""
+    env = os.environ.get("PDF2MD_SOURCE_FOLDER")
+    if env:
+        return env
+    secrets = os.path.join(ROOT, ".streamlit", "secrets.toml")
+    if os.path.exists(secrets):
+        try:
+            import tomllib
+            with open(secrets, "rb") as fh:
+                return tomllib.load(fh).get("source_folder", "")
+        except Exception:
+            pass
+    return ""
+
+
+SOURCE = default_source()
 
 
 def run(accept=False, source=SOURCE) -> int:
