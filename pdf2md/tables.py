@@ -157,6 +157,49 @@ def find_regions(bands, rules, margin, breaks=frozenset()):
     return regions
 
 
+def continuation(bands, cols, margin, page_height, owned) -> list:
+    """Bands at the top of a page that carry on the table the last page ended
+    with.  A table broken by a page break leaves its remaining rows stranded:
+    alone at the top of the next page they have no neighbours to form a table
+    with, so they have to be recognised by where they sit and how they line up.
+    """
+    take = []
+    for i, band in enumerate(bands):
+        if i in owned:
+            break
+        if band[0].yc > page_height * 0.09:      # not at the very top any more
+            break
+        starts = band_starts(band)
+        if not starts or abs(starts[0] - margin) <= 1.5:
+            break                                # prose, not a stray row
+        # Cell text sits just inside its column edge, so allow for the padding.
+        if not any(-1.5 <= starts[0] - c <= 7 for c in cols):
+            break                                # does not line up with the table
+        take.append(i)
+    return take
+
+
+def rows_from(bands, idx, cols, links, resolve) -> list:
+    """Plain cell rows for the given bands, using an existing table's columns."""
+    def column_of(x):
+        c = 0
+        for n, edge in enumerate(cols):
+            if x >= edge - 2:
+                c = n
+        return c
+
+    out = []
+    for i in idx:
+        buckets = [[] for _ in cols]
+        for line in bands[i]:
+            for cell in line_cells(line):
+                buckets[column_of(cell[0].x0)].extend(cell)
+        text = [tidy(render(b, links, resolve)) if b else "" for b in buckets]
+        if sum(1 for t in text if t) >= 2:
+            out.append(text)
+    return out
+
+
 def build(bands, region, links, resolve) -> Table:
     cols, ys, idx = region["cols"], region["rules"], region["bands"]
     ncol = len(cols)

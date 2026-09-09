@@ -53,6 +53,7 @@ class Page:
     lines: list[Line]
     rules: dict[float, list[float]]
     links: list[tuple]
+    height: float = 842.0
 
 
 @dataclass
@@ -189,7 +190,8 @@ def _links(page) -> list[tuple]:
 
 def read(path: str) -> Document:
     doc = pymupdf.open(path)
-    pages = [Page(i, _lines(p), _rules(p), _links(p)) for i, p in enumerate(doc)]
+    pages = [Page(i, _lines(p), _rules(p), _links(p), p.rect.height)
+             for i, p in enumerate(doc)]
     # Measure the body on long lines only.  Short lines are table cells, and in
     # a table-heavy page they outnumber the prose and skew both statistics.
     sizes = collections.Counter()

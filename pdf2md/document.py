@@ -9,7 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .inline import render, repair_hyphens, tidy
-from .tables import bands_of, build, find_regions
+from .tables import (bands_of, build, continuation, find_regions,
+                     rows_from)
 
 
 @dataclass
@@ -41,6 +42,7 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
             blocks.append(Block(_note_kind(paragraph, profile), tidy(paragraph)))
         paragraph, paragraph_blocks = None, set()
 
+    carry = None            # a table left hanging by a page break
     for page in doc.pages:
         bands = bands_of(page.lines)
         # A caption announces the next table, so it must not sit inside one.
@@ -60,8 +62,25 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
             for i in region["bands"]:
                 owner[i] = n
 
+        skip = set()
+        if carry:
+            extra = continuation(bands, carry["cols"], doc.margin,
+                                 page.height, set(owner))
+            if extra:
+                width = len(carry["table"].header)
+                for row in rows_from(bands, extra, carry["cols"],
+                                     page.links, resolve):
+                    row = ([""] * (width - len(row))) + row if len(row) < width                         else row[:width]
+                    carry["table"].rows.append(row)
+                carry["block"].text = carry["table"].to_markdown()
+                skip = set(extra)
+        carry = None
+
         i = 0
         while i < len(bands):
+            if i in skip:
+                i += 1
+                continue
             if i in owner:
                 close()
                 region = regions[owner[i]]
@@ -73,7 +92,12 @@ def assemble(doc, profile, known=frozenset()) -> Assembled:
                     # A spanning line that labelled no rows is a note about the
                     # table; it belongs beside it, not nowhere.
                     blocks.append(Block("prose", tidy(stray)))
-                i = max(region["bands"]) + 1
+                last = max(region["bands"])
+                # A table running to the foot of the page probably carries on.
+                if md and bands[last][0].yc > page.height * 0.88:
+                    carry = {"table": table, "block": blocks[-1 - len(table.orphans)],
+                             "cols": region["cols"]}
+                i = last + 1
                 continue
 
             band = bands[i]
