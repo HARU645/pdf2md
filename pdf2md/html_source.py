@@ -26,7 +26,12 @@ def tidy(text: str) -> str:
 #: Elements whose content is furniture, not text.
 SKIP = {"script", "style", "head", "select", "option", "input", "noscript",
         "textarea", "button"}
-VOID = {"br", "img", "hr", "meta", "link", "area", "base", "col", "source"}
+#: Elements that close themselves.  `input` is both skipped and void, which is
+#: why it is named in both sets: a browser saving a page writes it as plain
+#: HTML (`<input>`), and counting that as an opening to be closed means
+#: everything after it is skipped -- the whole article, silently.
+VOID = {"br", "img", "hr", "meta", "link", "area", "base", "col", "source",
+        "input"}
 
 
 class Node:
@@ -52,7 +57,7 @@ class _Tree(HTMLParser):
         self.skipping = 0
 
     def handle_starttag(self, tag, attrs):
-        if tag in SKIP:
+        if tag in SKIP and tag not in VOID:
             self.skipping += 1
             return
         if tag == "img":
@@ -75,7 +80,7 @@ class _Tree(HTMLParser):
             self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
-        if tag in SKIP:
+        if tag in SKIP and tag not in VOID:
             self.skipping = max(0, self.skipping - 1)
             return
         if self.skipping or tag in VOID:
@@ -118,9 +123,15 @@ def _image(node) -> str:
     is not to show the picture but to stop the sentences on either side from
     closing over the hole and reading as one argument.
     """
-    src = node.href or ""
+    src = (node.href or "").replace("\\", "/")
     if not src or src.startswith(FURNITURE):
         return ""
+    if "_files/" in src:
+        # Saved as a complete page, the pictures sit in a folder beside the
+        # file and the page points at that folder.  Name the picture where the
+        # site itself keeps it, which holds whether or not that folder came
+        # along -- and one of them usually does not.
+        src = "kuviot/" + os.path.basename(src)
     label = _flat(node.alt)
     if not label or label == "--":          # an arrow or a rule, drawn
         label = os.path.splitext(os.path.basename(src))[0]
@@ -442,7 +453,10 @@ def source_text(path) -> str:
 def _absolute(href) -> str:
     if re.match(r"^[a-z]+:", href or ""):
         return href
-    return "https://kaino.kotus.fi/visk/" + (href or "").lstrip("/")
+    # A saved page writes 'here' as './'; carried into an address it stays
+    # there, and the address reads as a folder that does not exist.
+    return ("https://kaino.kotus.fi/visk/"
+            + re.sub(r"^\./", "", (href or "").lstrip("/")))
 
 
 def to_markdown(built, profile, path) -> str:
