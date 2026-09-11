@@ -30,13 +30,14 @@ VOID = {"br", "img", "hr", "meta", "link", "area", "base", "col", "source"}
 
 
 class Node:
-    __slots__ = ("tag", "cls", "href", "kids")
+    __slots__ = ("tag", "cls", "href", "alt", "kids")
 
     def __init__(self, tag="", attrs=None):
         attrs = dict(attrs or {})
         self.tag = tag
         self.cls = set((attrs.get("class") or "").split())
-        self.href = attrs.get("href")
+        self.href = attrs.get("href") or attrs.get("src")
+        self.alt = attrs.get("alt") or ""
         self.kids = []
 
     def __repr__(self):
@@ -54,6 +55,13 @@ class _Tree(HTMLParser):
         if tag in SKIP:
             self.skipping += 1
             return
+        if tag == "img":
+            # A picture holds nothing this converter can read, but the page
+            # put it where the argument needs it.  Recorded, so that what is
+            # missing is visible; dropped, and the text closes over the gap.
+            if not self.skipping:
+                self.stack[-1].kids.append(Node(tag, attrs))
+            return
         if self.skipping or tag in VOID:
             return
         node = Node(tag, attrs)
@@ -61,7 +69,10 @@ class _Tree(HTMLParser):
         self.stack.append(node)
 
     def handle_startendtag(self, tag, attrs):
-        pass
+        # The pages close their images themselves (<img ... />), which arrives
+        # here rather than at handle_starttag.
+        if tag == "img":
+            self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
         if tag in SKIP:
@@ -94,6 +105,31 @@ def parse(path) -> Node:
     return tree.root
 
 
+#: Where the page keeps its own furniture -- the logo, the ornament, the
+#: arrows either side of the navigation.  None of it says anything about
+#: Finnish, and it sits on all 1738 pages.
+FURNITURE = "css/"
+
+
+def _image(node) -> str:
+    """A picture, named and left where it stood.
+
+    The converted text is read by something that cannot see it, so the point
+    is not to show the picture but to stop the sentences on either side from
+    closing over the hole and reading as one argument.
+    """
+    src = node.href or ""
+    if not src or src.startswith(FURNITURE):
+        return ""
+    label = _flat(node.alt)
+    if not label or label == "--":          # an arrow or a rule, drawn
+        label = os.path.splitext(os.path.basename(src))[0]
+    # A file name carries underscores, and an underscore is how this format
+    # starts an italic; left alone, 'kuvio_p1534' opens one that never closes.
+    label = re.sub(r"([_*\[\]])", r"\\\1", label)
+    return "![%s](%s)" % (label, _absolute(src))
+
+
 # ------------------------------------------------------------------ inline
 def _inline(node, resolve, italic=False, bold=False) -> str:
     out = []
@@ -111,6 +147,11 @@ def _inline(node, resolve, italic=False, bold=False) -> str:
                 core = f"**{core}**"
             out.append(("" if text[0] != " " else " ") + core
                        + ("" if text[-1] != " " else " "))
+            continue
+        if kid.tag == "img":
+            mark = _image(kid)
+            if mark:
+                out.append(mark)
             continue
         if kid.tag == "a" and kid.href:
             inner = _inline(kid, resolve, italic, bold)
@@ -130,6 +171,13 @@ def _inline(node, resolve, italic=False, bold=False) -> str:
               or "huomnumero" in kid.cls):
             # 'kasite' is a defined term, set in small capitals on the page.
             out.append(_inline(kid, resolve, italic, True))
+        elif kid.tag in BLOCKISH and kid.tag != "a":
+            # A cell, a row, a line of its own: the page sets these apart, and
+            # there is no space in the source to say so.  Run them together and
+            # the line number joins the speaker -- "11Y:" for "11 Y:".  The
+            # reader that checks this conversion already separates them, so
+            # leaving them joined here is also what makes the check complain.
+            out.append(" " + _inline(kid, resolve, italic, bold) + " ")
         else:
             out.append(_inline(kid, resolve, italic, bold))
     return "".join(out)
@@ -168,10 +216,20 @@ def _table(node, resolve) -> str:
     # so only the first of them would survive being read as one.
     spanning = [i for i, row in enumerate(rows)
                 if counts[i] < width and sum(1 for c in row if c) == 1 and row[0]]
-    # A label with no rows under it is labelling nothing, whatever it looked
-    # like; keep it as a row of its own rather than dropping it on the floor.
-    while spanning and spanning[-1] == len(rows) - 1:
-        spanning.pop()
+    # A label becomes a column on the rows beneath it rather than a row of its
+    # own, so a label with nothing beneath it is a label thrown away.  Two of
+    # them side by side are not a label and its rows either: they are a heading
+    # and the line under it, both written across the table, and reading the
+    # first as a label loses it the moment the second replaces it.
+    marked = set(spanning)
+
+    def labels_something(i):
+        if i - 1 in marked or i + 1 in marked:
+            return False
+        return any(any(rows[j]) for j in range(i + 1, len(rows))
+                   if j not in marked)
+
+    spanning = [i for i in spanning if labels_something(i)]
     headless = False
     if spanning and len(spanning) < len(rows):
         labelled, group = [], ""
@@ -197,6 +255,9 @@ def _table(node, resolve) -> str:
             if not data[r][c]:
                 data[r][c] = data[r - 1][c]
 
+    data = [r for r in data if any(r)]      # a row with nothing in it says nothing
+    if not data:
+        return ""
     keep = [c for c in range(width) if header[c] or any(r[c] for r in data)]
     if not keep:
         return ""
@@ -253,6 +314,13 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
                 for block in blocks[mark:]:
                     if block.kind == "prose":
                         block.kind = "note"
+            elif "esimerkkiryhma" in cls and not _descend(
+                    kid, lambda n: "esim_sisalto" in n.cls):
+                # Some example groups are laid out as a table instead of as
+                # example lines.  This branch reads the lines and would drop
+                # the rest, so hand the group to the ordinary walk, which
+                # knows what a table is.
+                walk(kid)
             elif "esimerkkiryhma" in cls:
                 lines = []
                 for body in _descend(kid, lambda n: "esim_sisalto" in n.cls):
@@ -312,6 +380,11 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
                     walk(kid)
             elif tag == "li" and _text(kid).strip().startswith("»"):
                 footer.append(tidy(_inline(kid, resolve)))
+            elif tag == "img":
+                # A figure standing on its own, rather than inside a sentence.
+                mark = _image(kid)
+                if mark:
+                    blocks.append(Block("prose", mark))
             elif tag == "p":
                 text = tidy(_inline(kid, resolve))
                 if text:
@@ -339,16 +412,24 @@ BLOCKISH = {"p", "div", "table", "tr", "td", "th", "li", "ul", "ol", "br",
             "a"}      # two links written side by side are two separate labels
 
 
+#: Spans that the converter puts on a line of their own.  The check has to
+#: break where the conversion breaks, or a heading and the line under it arrive
+#: as one word ('adjektiiviOlen') that appears in no conversion and is then
+#: reported as lost.  Breaking everywhere instead is worse: a raised 'x' inside
+#: a word becomes a word of its own and goes looking for itself.
+APART = {"otsikko_esimryhma", "otsikko_esim", "esimerkki", "esim_marginaali"}
+
+
 def _spaced_text(node) -> str:
     if isinstance(node, str):
         return node
     out = []
     for kid in node.kids:
-        blockish = isinstance(kid, Node) and kid.tag in BLOCKISH
-        if blockish:
+        apart = isinstance(kid, Node) and (kid.tag in BLOCKISH or kid.cls & APART)
+        if apart:
             out.append(" ")
         out.append(_spaced_text(kid))
-        if blockish:
+        if apart:
             out.append(" ")
     return "".join(out)
 

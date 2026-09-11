@@ -63,6 +63,9 @@ def structure_issues(markdown) -> list:
 
     body = re.sub(r"\]\([^)]*\)", "]()", markdown)
     body = re.sub(r"^---$.*?^---$", "", body, flags=re.S | re.M)
+    # A mark with a backslash in front of it is a character in the text, not a
+    # mark; counting it looks for a partner that was never meant to exist.
+    body = re.sub(r"\\.", "", body)
     if body.count("_") % 2:
         issues.append("기울임 표시(_)의 짝이 맞지 않습니다")
     if body.count("**") % 2:
