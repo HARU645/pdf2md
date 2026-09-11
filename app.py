@@ -51,7 +51,7 @@ DEFAULT_OUT = _setting("output_folder") or (
 LOCAL = os.name == "nt" and os.environ.get("PDF2MD_HOSTED") != "1"
 
 
-SOURCE_EXT = (".pdf", ".html", ".htm")
+SOURCE_EXT = (".pdf", ".html", ".htm", ".mhtml", ".mht")
 
 
 def _sources_in(path) -> int:
@@ -294,7 +294,7 @@ if mode == "폴더 통째로":
             st.warning("이 폴더에 변환할 파일이 없습니다.")
 else:
     uploads = st.file_uploader("파일을 고르세요 (PDF 또는 저장한 웹페이지, 여러 개 가능)",
-                               type=["pdf", "html", "htm"],
+                               type=["pdf", "html", "htm", "mhtml", "mht"],
                                accept_multiple_files=True)
     out_dir = None
     if LOCAL:
@@ -380,6 +380,8 @@ if results:
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for r in results:
             zf.writestr(r.name, r.markdown)
+            for name, data in r.assets.items():
+                zf.writestr("images/" + name, data)     # what the links expect
         zf.writestr("index.md", build_index(results))
     col_zip.download_button("전부 ZIP으로 내려받기", buffer.getvalue(),
                             file_name="pdf2md.zip", mime="application/zip")

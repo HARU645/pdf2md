@@ -28,6 +28,10 @@ class Assembled:
     blocks: list
     footer: list
     warnings: list = field(default_factory=list)
+    #: Pictures the document carries with it, as {file name: bytes}.  A page
+    #: saved as a single file holds them inside itself; they are written out
+    #: beside the Markdown so that the links in it lead somewhere.
+    assets: dict = field(default_factory=dict)
 
 
 def assemble(doc, profile, known=frozenset()) -> Assembled:

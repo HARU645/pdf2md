@@ -103,17 +103,82 @@ class _Tree(HTMLParser):
             self.stack[-1].kids.append(" ")
 
 
+def is_archive(path) -> bool:
+    """A page saved as one file, pictures and all."""
+    return path.lower().endswith((".mhtml", ".mht"))
+
+
+def _read(path):
+    """(the page's own HTML, the files it arrived with).
+
+    Saved as a folder of loose files, the pictures go missing the moment the
+    page is moved without them.  Saved as one file, there is nothing to lose:
+    the pictures travel inside it, and the addresses in the page still point
+    at where they came from, which is what matches them up again here.
+    """
+    if not is_archive(path):
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read(), {}
+
+    import email
+    with open(path, "rb") as fh:
+        message = email.message_from_binary_file(fh)
+    html, held = "", {}
+    for part in message.walk():
+        if part.is_multipart():
+            continue
+        kind = part.get_content_type()
+        body = part.get_payload(decode=True)
+        if body is None:
+            continue
+        where = (part.get("Content-Location") or "").strip()
+        if kind == "text/html" and not html:
+            html = body.decode(part.get_content_charset() or "utf-8", "replace")
+        elif kind.startswith("image/") and where and "/css/" not in where:
+            # Under /css/ is the site's own furniture: the logo, the ornament,
+            # the little arrows.  Nothing there is about Finnish.
+            held[where] = (os.path.basename(where.split("?")[0]), body)
+    return html, held
+
+
+def load(path):
+    """(the tree, the pictures it carries)."""
+    text, held = _read(path)
+    tree = _Tree()
+    tree.feed(text)
+    if held:
+        # Point each picture at the copy that will be written beside the
+        # Markdown, so the link leads to a file rather than to a website that
+        # turns programs away.
+        for node in _descend(tree.root, lambda n: n.tag == "img"):
+            found = held.get(node.href or "")
+            if found:
+                node.href = CARRIED + found[0]
+    return tree.root, held
+
+
 def parse(path) -> Node:
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        tree = _Tree()
-        tree.feed(fh.read())
-    return tree.root
+    return load(path)[0]
 
 
 #: Where the page keeps its own furniture -- the logo, the ornament, the
 #: arrows either side of the navigation.  None of it says anything about
 #: Finnish, and it sits on all 1738 pages.
 FURNITURE = "css/"
+
+#: Where a picture that travelled with its page is written out, beside the
+#: Markdown that points at it.
+CARRIED = "images/"
+
+
+def _label(node, src) -> str:
+    """What to call a picture in the text that stands in for it."""
+    label = _flat(node.alt)
+    if not label or label == "--":          # an arrow or a rule, drawn
+        label = os.path.splitext(os.path.basename(src))[0]
+    # A file name carries underscores, and an underscore is how this format
+    # starts an italic; left alone, 'kuvio_p1534' opens one that never closes.
+    return re.sub(r"([_*\[\]])", r"\\\1", label)
 
 
 def _image(node) -> str:
@@ -126,19 +191,16 @@ def _image(node) -> str:
     src = (node.href or "").replace("\\", "/")
     if not src or src.startswith(FURNITURE):
         return ""
+    if src.startswith(CARRIED):
+        # The picture came with the page and is written out beside this file.
+        return "![%s](./%s)" % (_label(node, src), src)
     if "_files/" in src:
         # Saved as a complete page, the pictures sit in a folder beside the
         # file and the page points at that folder.  Name the picture where the
         # site itself keeps it, which holds whether or not that folder came
         # along -- and one of them usually does not.
         src = "kuviot/" + os.path.basename(src)
-    label = _flat(node.alt)
-    if not label or label == "--":          # an arrow or a rule, drawn
-        label = os.path.splitext(os.path.basename(src))[0]
-    # A file name carries underscores, and an underscore is how this format
-    # starts an italic; left alone, 'kuvio_p1534' opens one that never closes.
-    label = re.sub(r"([_*\[\]])", r"\\\1", label)
-    return "![%s](%s)" % (label, _absolute(src))
+    return "![%s](%s)" % (_label(node, src), _absolute(src))
 
 
 # ------------------------------------------------------------------ inline
@@ -299,7 +361,7 @@ def content_root(root):
 
 
 def assemble(path, profile, known=frozenset()) -> Assembled:
-    root = parse(path)
+    root, held = load(path)
     resolve = lambda href: profile.resolve_link(_absolute(href), known)
     title, crumbs, blocks, footer = "", [], [], []
 
@@ -413,7 +475,13 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
     parsed = profile.section_id(title)
     if parsed:
         section, title = parsed
-    return Assembled(title, section, [c for c in crumbs if c], blocks, footer)
+    # Only the pictures that were actually put in the text: a page carries the
+    # ones it draws anywhere, and writing out the rest would leave files beside
+    # the Markdown that nothing points at.
+    used = {name: data for name, data in held.values()
+            if any(CARRIED + name in block.text for block in blocks)}
+    return Assembled(title, section, [c for c in crumbs if c], blocks, footer,
+                     assets=used)
 
 
 #: Elements that end a run of words.  Without a break between them, the last
@@ -465,8 +533,11 @@ def to_markdown(built, profile, path) -> str:
 
 
 def looks_like_visk(path) -> bool:
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        head = fh.read(4000)
+    if is_archive(path):
+        head = _read(path)[0][:4000]        # the page itself, not the wrapper
+    else:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4000)
     return "murupolku" in head or "kaino.kotus.fi/visk" in head
 
 

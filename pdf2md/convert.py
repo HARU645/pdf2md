@@ -34,6 +34,8 @@ class Result:
     lost: object = None
     issues: list = field(default_factory=list)
     warnings: list = field(default_factory=list)
+    #: Pictures to write beside this file, as {file name: bytes}.
+    assets: dict = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -64,7 +66,9 @@ def _raw_text(path) -> str:
 
 
 def is_html(path) -> bool:
-    return path.lower().endswith((".html", ".htm"))
+    # A page saved as a single file is a saved page too; it simply keeps its
+    # pictures inside itself rather than in a folder that can go missing.
+    return path.lower().endswith((".html", ".htm", ".mhtml", ".mht"))
 
 
 def convert_file(path, known=frozenset(), doc=None, profile=None) -> Result:
@@ -100,6 +104,7 @@ def _convert_html(path, known, profile) -> Result:
                   profile=profile.name + "+html", confidence=1.0,
                   section=built.section, title=built.title,
                   lost=checks["lost"] or None, issues=checks["issues"],
+                  assets=built.assets,
                   warnings=list(profile.warnings(None)) if profile.name == "generic" else [])
 
 
@@ -153,18 +158,36 @@ def find_sources(folder) -> list:
     If there is nothing at the top level, look one folder down -- sources are
     often kept in a `html` or `pdf` subfolder beside the output.
     """
-    for pattern in ("*.html", "*.htm", "*.pdf"):
-        here = sorted(glob.glob(os.path.join(folder, pattern)))
-        if here:
-            return here
-    for pattern in ("*.html", "*.htm", "*.pdf"):
-        deeper = []
-        for entry in sorted(glob.glob(os.path.join(folder, "*"))):
-            if os.path.isdir(entry):
-                deeper += sorted(glob.glob(os.path.join(entry, pattern)))
-        if deeper:
-            return deeper
+    for look in (lambda pat: glob.glob(os.path.join(folder, pat)),
+                 lambda pat: [f for entry in sorted(glob.glob(os.path.join(folder, "*")))
+                              if os.path.isdir(entry)
+                              for f in glob.glob(os.path.join(entry, pat))]):
+        pages = [f for pat in WEB for f in look(pat)]
+        if pages:
+            return _one_each(pages)
+        printouts = sorted(look("*.pdf"))
+        if printouts:
+            return printouts
     return []
+
+
+#: Saved pages, whichever way the browser was asked to save them.
+WEB = ("*.mhtml", "*.mht", "*.html", "*.htm")
+
+
+def _one_each(pages) -> list:
+    """One source per page, when the same page was saved more than one way.
+
+    The single-file kind wins: it is the only one that carries the pictures,
+    and the other kind points at a folder that may or may not have come along.
+    """
+    best = {}
+    for path in pages:
+        stem = os.path.splitext(os.path.basename(path))[0].lower()
+        rank = 0 if path.lower().endswith((".mhtml", ".mht")) else 1
+        if stem not in best or rank < best[stem][0]:
+            best[stem] = (rank, path)
+    return sorted(path for _, path in best.values())
 
 
 def find_pdfs(folder) -> list:            # kept for callers that want only PDFs
@@ -185,6 +208,14 @@ def save(results, dst) -> list:
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(result.markdown)
         written.append(path)
+        for name, data in result.assets.items():
+            # The pictures the page carried, written where its links point.
+            folder = os.path.join(dst, "images")
+            os.makedirs(folder, exist_ok=True)
+            spot = os.path.join(folder, name)
+            with open(spot, "wb") as fh:
+                fh.write(data)
+            written.append(spot)
     index_path = os.path.join(dst, "index.md")
     with open(index_path, "w", encoding="utf-8") as fh:
         fh.write(build_index(results))
