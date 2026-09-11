@@ -14,7 +14,14 @@ from html.parser import HTMLParser
 
 from .document import Assembled, Block
 from .profiles.visk import NAME
-from .inline import repair_hyphens, tidy
+from .inline import repair_hyphens
+from .inline import tidy as _tidy
+
+
+def tidy(text: str) -> str:
+    """As the shared one, except that the source of a page says where every
+    italic starts and ends, so two of them side by side stay two."""
+    return _tidy(text, weld=False)
 
 #: Elements whose content is furniture, not text.
 SKIP = {"script", "style", "head", "select", "option", "input", "noscript",
@@ -68,8 +75,16 @@ class _Tree(HTMLParser):
                 return
 
     def handle_data(self, data):
-        if not self.skipping and data.strip():
+        if self.skipping:
+            return
+        if data.strip():
             self.stack[-1].kids.append(data)
+        elif data:
+            # The gap between two elements is the only thing holding their
+            # words apart.  Thrown away, "<em>c</em> <em>s</em>:na" arrives as
+            # one word, and no check can see it: the source is read through
+            # this same parser, so both sides agree on the damage.
+            self.stack[-1].kids.append(" ")
 
 
 def parse(path) -> Node:
@@ -254,10 +269,15 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
                     text = tidy(_inline(rest, resolve))
                     if text:
                         lines.append(text)
-                label = ""
-                for margin in _descend(kid, lambda n: "esim_marginaali" in n.cls):
-                    label = _flat(_text(margin))
-                    break
+                # Whatever else the group holds is the label in its margin.
+                # Naming the class it carries misses the variants -- the
+                # speech examples use 'puhe-esim_marginaali' -- and a label
+                # this branch does not pick up is a label thrown away, since
+                # nothing downstream walks the group again.
+                label = " ".join(
+                    _flat(_text(part)) for part in kid.kids
+                    if isinstance(part, Node) and "esim_sisalto" not in part.cls
+                    and _text(part).strip()).strip()
                 if label and lines:
                     lines[0] = label + " " + lines[0]
                 if lines:
@@ -265,6 +285,14 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
             elif tag in ("h3", "h4", "h5", "h6"):
                 blocks.append(Block("caption", tidy(_inline(kid, resolve))))
             elif tag == "table":
+                # The page draws the note under a table as a table of one
+                # cell, to box it off.  It is a paragraph about the table
+                # above, and calling it data would say it holds some.
+                if cls & {"taulukkokommentti", "kuviokommentti"}:
+                    text = tidy(_inline(kid, resolve))
+                    if text:
+                        blocks.append(Block("prose", text))
+                    continue
                 md = _table(kid, resolve)
                 if md:
                     blocks.append(Block("table", md))

@@ -73,10 +73,18 @@ def render(runs, links, resolve=lambda uri: uri) -> str:
     return "".join(out)
 
 
-def tidy(text: str) -> str:
+def tidy(text: str, weld: bool = True) -> str:
+    """Tidy inline Markdown.
+
+    `weld` joins two stretches of italics that sit side by side.  Read off a
+    page's coordinates, one italic phrase arrives as several runs and has to be
+    put back together.  Read from the source of the page, two italics side by
+    side are two: welding them would say that "c s" is one form, where the page
+    says a `c` is pronounced as an `s`.
+    """
     s = text.replace("\xa0", " ")
     s = re.sub(r"\*\*(\s*)\*\*", r"\1", s)      # keep the space between terms
-    s = re.sub(r"_(\s*)_", r"\1", s)
+    s = re.sub(r"_(\s*)_", r"\1", s) if weld else s.replace("__", "")
     s = re.sub(r"\s+([,.;!?])", r"\1", s)       # ':' is a real separator here
     s = re.sub(r"([(\[])\s+", r"\1", s)
     s = re.sub(r"\s+([)\]])", r"\1", s)
