@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import collections
 import re
+from html import unescape as html_unescape
 
 WORD = re.compile(r"[0-9A-Za-zÄÖÅäöåŋɾ]+")
 # The separator under a table head.  It must actually contain dashes: an
@@ -107,3 +108,35 @@ def against_tags(markdown, path) -> list:
         return [f"표 개수가 PDF의 구조 정보와 다릅니다 "
                 f"(문서: {declared}개, 변환 결과: {built}개)"]
     return []
+
+
+# ------------------------------------------------- a second, separate reading
+def article(html) -> str:
+    """The section itself, found by counting <div>s rather than by parsing.
+
+    Deliberately a different method from the converter's.  The converter reads
+    the page and is then checked against the page as the converter read it, so
+    a mistake in that reading hides itself perfectly: both sides agree, and the
+    check passes.  That is how a lost space between two elements, and later a
+    whole article dropped behind an unclosed tag, both went unnoticed.
+    """
+    start = re.search(r"""<div[^>]*class\s*=\s*["'][^"']*\bpykala\b[^>]*>""",
+                      html, re.I)
+    if not start:
+        return html
+    depth = 1
+    for step in re.finditer(r"<(/?)div\b[^>]*>", html[start.end():], re.I):
+        depth += -1 if step.group(1) else 1
+        if depth == 0:
+            return html[start.end():start.end() + step.start()]
+    return html[start.end():]
+
+
+def second_reading(html) -> str:
+    """Every word in the section, with the tags simply cut out."""
+    text = re.sub(r"<!--.*?-->", " ", html, flags=re.S)
+    for tag in ("script", "style", "head", "select", "noscript", "textarea"):
+        text = re.sub(r"<%s\b.*?</%s\s*>" % (tag, tag), " ", text,
+                      flags=re.S | re.I)
+    text = re.sub(r"<[^>]+>", " ", article(text))
+    return html_unescape(text)

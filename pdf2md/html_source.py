@@ -14,6 +14,7 @@ from html.parser import HTMLParser
 
 from .document import Assembled, Block
 from .profiles.visk import NAME
+from .structures import unfamiliar
 from .inline import repair_hyphens
 from .inline import tidy as _tidy
 
@@ -171,6 +172,20 @@ FURNITURE = "css/"
 CARRIED = "images/"
 
 
+def _inside(text, mark) -> str:
+    """Put `mark` around the letters, inside any emphasis already around them.
+
+    A raised letter inside an italic phrase is still part of that phrase.  Mark
+    it from the outside and the italic is cut in two -- '_-tA_^_(x)_^' -- where
+    marking it from the inside keeps one phrase: '_-tA^(x)^_'.
+    """
+    for fence in ("**", "_"):
+        if (text.startswith(fence) and text.endswith(fence)
+                and len(text) > 2 * len(fence)):
+            return fence + _inside(text[len(fence):-len(fence)], mark) + fence
+    return mark + text + mark
+
+
 def _label(node, src) -> str:
     """What to call a picture in the text that stands in for it."""
     label = _flat(node.alt)
@@ -237,6 +252,23 @@ def _inline(node, resolve, italic=False, bold=False) -> str:
                 if not lead and out and out[-1] and out[-1][-1] not in " ([":
                     lead = " "
                 out.append(f"{lead}[{label}]({resolve(kid.href)}){trail}")
+            continue
+        if kid.tag in ("sup", "sub"):
+            # Raised and lowered letters are notation, not spelling: the raised
+            # x marks boundary gemination and the lowered NP names a category.
+            # Set on the line, they read as part of the word next to them --
+            # 'kerrox', 'talossaNP' -- which is a word the language does not
+            # have.  The marks say 'this was above' and 'this was below'.
+            inner = _inline(kid, resolve, italic, bold)
+            core = inner.strip()
+            if not core:
+                out.append(inner)
+                continue
+            mark = "^" if kid.tag == "sup" else "~"
+            # The marks go around the letters, not around the gap beside them:
+            # a space that was inside the element still separates two words.
+            out.append(("" if inner[:1] != " " else " ") + _inside(core, mark)
+                       + ("" if inner[-1:] != " " else " "))
             continue
         if kid.tag in ("em", "i") or "kielenaines" in kid.cls:
             out.append(_inline(kid, resolve, True, bold))
@@ -360,6 +392,18 @@ def content_root(root):
     return found[0] if found else root
 
 
+def _parts(root):
+    """(tag, classes) for every element in the body, for the check below."""
+    out, stack = [], [content_root(root)]
+    while stack:
+        node = stack.pop()
+        for kid in node.kids:
+            if isinstance(kid, Node):
+                out.append((kid.tag, kid.cls))
+                stack.append(kid)
+    return out
+
+
 def assemble(path, profile, known=frozenset()) -> Assembled:
     root, held = load(path)
     resolve = lambda href: profile.resolve_link(_absolute(href), known)
@@ -480,8 +524,14 @@ def assemble(path, profile, known=frozenset()) -> Assembled:
     # the Markdown that nothing points at.
     used = {name: data for name, data in held.values()
             if any(CARRIED + name in block.text for block in blocks)}
+    # Say what was in the page that this converter has never been taught, so
+    # that a page cannot introduce something and have it quietly vanish.
+    strangers = unfamiliar(_parts(root))
+    notes = ["처음 보는 구조가 있습니다: " + ", ".join(strangers[:8])
+             + ("  외 %d개" % (len(strangers) - 8) if len(strangers) > 8 else "")
+             + ". 결과에 빠진 곳이 없는지 확인해 주세요."] if strangers else []
     return Assembled(title, section, [c for c in crumbs if c], blocks, footer,
-                     assets=used)
+                     warnings=notes, assets=used)
 
 
 #: Elements that end a run of words.  Without a break between them, the last
@@ -498,13 +548,18 @@ BLOCKISH = {"p", "div", "table", "tr", "td", "th", "li", "ul", "ol", "br",
 #: a word becomes a word of its own and goes looking for itself.
 APART = {"otsikko_esimryhma", "otsikko_esim", "esimerkki", "esim_marginaali"}
 
+#: Raised and lowered letters are set apart in the output now, so the reading
+#: this is checked against has to hold them apart too, or the two disagree.
+APART_TAGS = {"sup", "sub"}
+
 
 def _spaced_text(node) -> str:
     if isinstance(node, str):
         return node
     out = []
     for kid in node.kids:
-        apart = isinstance(kid, Node) and (kid.tag in BLOCKISH or kid.cls & APART)
+        apart = isinstance(kid, Node) and (
+            kid.tag in BLOCKISH or kid.tag in APART_TAGS or kid.cls & APART)
         if apart:
             out.append(" ")
         out.append(_spaced_text(kid))

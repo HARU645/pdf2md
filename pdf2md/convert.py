@@ -17,7 +17,8 @@ import pymupdf
 from . import html_source, profiles
 from .document import assemble, to_markdown
 from .reader import read
-from .verify import against_tags, report
+from .verify import against_tags, lost_tokens, report
+from .verify import second_reading as verify_second
 
 SECTION_REF = re.compile(r"sisallys\.php\?p=(\d+)")
 
@@ -100,12 +101,24 @@ def _convert_html(path, known, profile) -> Result:
     markdown = to_markdown(built, profile, path)
     checks = report(html_source.source_text(path), markdown, built.title)
     name = html_source.output_name(path) or profile.output_name(path, None)
+
+    # The same page counted again, by a method that shares no code with the
+    # reading above.  A mistake in that reading cannot hide from this one --
+    # which is how it hid twice before.  It is the rougher of the two: where
+    # the page spaces out letters for emphasis ("J oo : j oo"), it counts the
+    # pieces separately, so it warns rather than declares.
+    second = lost_tokens(verify_second(html_source._read(path)[0]),
+                         markdown, built.title)
+    doubts = ["다른 방법으로 원본을 한 번 더 세어보니 이 글자가 결과에 없습니다: "
+              + ", ".join(list(second)[:8])
+              + ". 원본이 글자를 띄어 쓴 곳이면 정상입니다."] if second else []
     return Result(path=path, name=name, markdown=markdown,
                   profile=profile.name + "+html", confidence=1.0,
                   section=built.section, title=built.title,
                   lost=checks["lost"] or None, issues=checks["issues"],
                   assets=built.assets,
-                  warnings=list(profile.warnings(None)) if profile.name == "generic" else [])
+                  warnings=list(built.warnings) + doubts
+                  + (list(profile.warnings(None)) if profile.name == "generic" else []))
 
 
 def convert_many(files, dst=None, write=True) -> list:
